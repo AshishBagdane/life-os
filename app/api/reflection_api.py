@@ -1,44 +1,58 @@
-from fastapi import APIRouter, HTTPException
+import os
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+# Import the rate limiter we set up earlier
 from app.core.limiter import limiter
+
+# Import your updated schemas
 from app.models.schemas import ReflectionRequest, ReflectionResponse
+
+# Import your real multi-agent execution functions (Handles both DEV/Ollama and PROD/Gemini)
 from app.agents.reflection_agent import analyze_day, analyze_day_stream
 
 router = APIRouter()
 
-@limiter.limit("3/minute")  # Set your limit here! (e.g., 3 requests per minute)
+# Read the environment mode (Defaults to PROD if not set)
+ENV_MODE = os.getenv("ENVIRONMENT", "PROD").upper()
+
+# --- Standard REST Endpoint ---
 @router.post("/reflect", response_model=ReflectionResponse)
-async def reflect_on_day(request: ReflectionRequest):
+async def reflect_on_day(payload: ReflectionRequest):
     """
-        Takes the user's daily narration and runs it through the
-        Orchestrator Agent to extract scores and actionable insights.
-        """
+    Standard REST endpoint.
+    Routes to the mock generator or the active LLM strategy based on the environment.
+    """
     try:
-        # Pass the narration string to your multi-agent system
-        result = await analyze_day(request.narration)
-
-        # FastAPI will automatically validate 'result' against ReflectionResponse
-        # and serialize it into clean JSON for your frontend.
-        return result
-
+        # This automatically uses Ollama if ENV=DEV, or Gemini if ENV=PROD
+        response = await analyze_day(
+            narration=payload.narration,
+            historical_context=payload.historical_context
+        )
+        return response
     except Exception as e:
-        # Catch any LLM or ADK execution errors
-        raise HTTPException(status_code=500, detail=f"Reflection analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Reflection failed: {str(e)}")
 
-# Add the new Streaming endpoint
-@limiter.limit("3/minute")  # Set your limit here! (e.g., 3 requests per minute)
+
+# --- Streaming Endpoint (For your Expo App) ---
 @router.post("/reflect/stream")
-async def reflect_on_day_stream(request: ReflectionRequest):
+@limiter.limit("3/minute")  # Protects your API credits/compute
+async def reflect_on_day_stream(request: Request, payload: ReflectionRequest):
     """
-    Streams the execution progress of the multi-agent pipeline
-    and returns the final JSON payload at the end.
+    Streaming NDJSON endpoint.
+    Streams real-time status updates to the frontend using the active environment strategy.
+    Limited to 3 requests per minute per IP.
     """
     try:
-        # We pass the generator function directly to StreamingResponse
-        # media_type="application/x-ndjson" tells the client to expect multiple JSON lines
+        # This automatically uses Ollama if ENV=DEV, or Gemini if ENV=PROD
+        generator = analyze_day_stream(
+            narration=payload.narration,
+            historical_context=payload.historical_context
+        )
+
+        # Pass the generator function to StreamingResponse
         return StreamingResponse(
-            analyze_day_stream(request.narration),
+            generator,
             media_type="application/x-ndjson"
         )
     except Exception as e:
