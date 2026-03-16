@@ -6,10 +6,10 @@ from fastapi.responses import StreamingResponse
 from app.core.limiter import limiter
 
 # Import your updated schemas
-from app.models.schemas import ReflectionRequest, ReflectionResponse
+from app.models.schemas import ReflectionRequest, ReflectionResponse, PerspectiveResponse
+from app.services.orchestrator import AIOrchestrator
 
-# Import your real multi-agent execution functions (Handles both DEV/Ollama and PROD/Gemini)
-from app.agents.reflection_agent import analyze_day, analyze_day_stream
+orchestrator = AIOrchestrator()
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ async def reflect_on_day(payload: ReflectionRequest):
     """
     try:
         # This automatically uses Ollama if ENV=DEV, or Gemini if ENV=PROD
-        response = await analyze_day(
+        response = await orchestrator.analyze_day(
             narration=payload.narration,
             historical_context=payload.historical_context
         )
@@ -45,7 +45,7 @@ async def reflect_on_day_stream(request: Request, payload: ReflectionRequest):
     """
     try:
         # This automatically uses Ollama if ENV=DEV, or Gemini if ENV=PROD
-        generator = analyze_day_stream(
+        generator = orchestrator.analyze_day_stream(
             narration=payload.narration,
             historical_context=payload.historical_context
         )
@@ -57,3 +57,22 @@ async def reflect_on_day_stream(request: Request, payload: ReflectionRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
+
+@router.post("/perspectives", response_model=PerspectiveResponse) # Output is raw text string
+@limiter.limit("2/minute") # SlowAPI decorator protecting local compute/cloud credits
+async def get_perspectives(request: Request, payload: ReflectionRequest): # ACCEPT request: Request HERE!
+    """
+    Standard REST endpoint for wisdom analysis.
+    Accepts the daily narration and optional historical context.
+    Returns a strict JSON PerspectiveResponse payload.
+    """
+    try:
+        # FastAPI now injects 'request', which SlowAPI uses behind the scenes
+        # You can continue to use 'payload' just as before
+        analysis = await orchestrator.analyze_perspectives(
+            narration=payload.narration,
+            historical_context=payload.historical_context
+        )
+        return analysis
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Perspective analysis failed: {str(e)}")

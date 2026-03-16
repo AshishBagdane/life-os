@@ -1,6 +1,7 @@
 from pydantic import BaseModel, field_validator
 from typing import Optional, List, Any
 
+# --- 1. Sub-Models ---
 class LifeScores(BaseModel):
     body: int
     mind: int
@@ -11,45 +12,54 @@ class PastContext(BaseModel):
     core_identity: str
     recent_scores: Optional[List[LifeScores]] = []
 
+# V2 FEATURE: The Nested Strategy Model
+class StrategySimulation(BaseModel):
+    strategy_name: str
+    best_outcome: str
+    most_realistic_outcome: str
+    worst_outcome: str
+
+# --- 2. Request Models ---
 class ReflectionRequest(BaseModel):
     narration: str
     historical_context: Optional[PastContext] = None
 
+# --- 3. Response Models ---
 class ReflectionResponse(BaseModel):
     summary: str
     insights: List[str]
     scores: LifeScores
 
-    # THE SHIELD: Intercept the 'insights' array before strict validation
     @field_validator('insights', mode='before')
     @classmethod
     def sanitize_insights(cls, v: Any) -> List[str]:
-        # If the AI completely failed and didn't return a list,
-        # return it as-is and let Pydantic throw its standard error.
-        if not isinstance(v, list):
-            return v
-
+        if not isinstance(v, list): return v
         clean_list = []
         for item in v:
-            if isinstance(item, str):
-                # Happy Path: The LLM followed instructions and gave us clean strings.
-                clean_list.append(item)
+            if isinstance(item, str): clean_list.append(item)
             elif isinstance(item, dict):
-                # Hallucination Path: The LLM wrapped the string in an object
-                # e.g., {"insight": "You worked too hard today."}
-                # We grab the first value inside that dictionary and save it.
                 values = list(item.values())
-                if values:
-                    clean_list.append(str(values[0]))
-            else:
-                # If it hallucinated numbers or booleans in the array, force them to strings
-                clean_list.append(str(item))
-
+                if values: clean_list.append(str(values[0]))
+            else: clean_list.append(str(item))
         return clean_list
 
-# --- Intermediate Schemas for Strict JSON Mode ---
-class AgentInsights(BaseModel):
-    insights: list[str]
+# V2 FEATURE: The updated Perspective Schema
+class PerspectiveResponse(BaseModel):
+    situation_summary: str
+    stakeholders: List[str]
+    strategies: List[StrategySimulation]  # Using the nested model here!
+    reflection_questions: List[str]
+    recommended_approach: str
 
-class AgentSummary(BaseModel):
-    summary: str
+    @field_validator('stakeholders', 'reflection_questions', mode='before')
+    @classmethod
+    def sanitize_lists(cls, v: Any) -> List[str]:
+        if not isinstance(v, list): return v
+        clean_list = []
+        for item in v:
+            if isinstance(item, str): clean_list.append(item)
+            elif isinstance(item, dict):
+                values = list(item.values())
+                if values: clean_list.append(str(values[0]))
+            else: clean_list.append(str(item))
+        return clean_list
